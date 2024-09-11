@@ -2,14 +2,57 @@ const express = require("express");
 const http = require("http");
 const WebSocket = require("ws");
 const { createClient, LiveTranscriptionEvents } = require("@deepgram/sdk");
-const dotenv = require("dotenv");
-dotenv.config();
+// const dotenv = require("dotenv");
+// dotenv.config();
+const { Translate } = require('@google-cloud/translate').v2;
+const textToSpeechApi = require('@google-cloud/text-to-speech');
+const { writeFile } = require('node:fs/promises');
+
+const translate = new Translate({
+  key: 'AIzaSyCjHldR1nIlhUvYSKy_OE0n-CzijJAU6SU',
+  projectId: 'audio-translate-435315'
+});
+const textToSpeechClient = new textToSpeechApi.TextToSpeechClient({apiKey: 'AIzaSyCjHldR1nIlhUvYSKy_OE0n-CzijJAU6SU'});
+
+let outputId = 1;
+
+async function textToSpeech(text, languageCode) {
+  
+  // Construct the request
+  const request = {
+    input: {text: text},
+    // Select the language and SSML voice gender (optional)
+    voice: {languageCode: 'en-US', ssmlGender: 'NEUTRAL'},
+    // select the type of audio encoding
+    audioConfig: {audioEncoding: 'MP3'},
+  };
+
+  // Performs the text-to-speech request
+  const [response] = await textToSpeechClient.synthesizeSpeech(request);
+
+  // Save the generated binary audio content to a local file
+  await writeFile(`output${outputId}.mp3`, response.audioContent, 'binary');
+  outputId++
+  console.log('Audio content written to file: output.mp3');
+}
+
+async function translateText(text, target) {
+  // Translates the text into the target language. "text" can be a string for
+  // translating a single piece of text, or an array of strings for translating
+  // multiple texts.
+  let [translations] = await translate.translate(text, target);
+  translations = Array.isArray(translations) ? translations : [translations];
+  return translations;
+}
+
+
+
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-const deepgramClient = createClient(process.env.DEEPGRAM_API_KEY);
+const deepgramClient = createClient('d92126452a91f6b7773cd3052391129562f08f0e');
 let keepAlive;
 
 const setupDeepgram = (ws) => {
@@ -29,10 +72,16 @@ const setupDeepgram = (ws) => {
   deepgram.addListener(LiveTranscriptionEvents.Open, async () => {
     console.log("deepgram: connected");
 
-    deepgram.addListener(LiveTranscriptionEvents.Transcript, (data) => {
+    deepgram.addListener(LiveTranscriptionEvents.Transcript, async (data) => {
       console.log("deepgram: packet received");
       console.log("deepgram: transcript received");
-      console.log("socket: transcript sent to client");
+      console.log("socket: transcript sent to client", data.channel.alternatives[0].transcript);
+
+      const target = 'ru'
+      const translations = await translateText(data.channel.alternatives[0].transcript, target)
+      console.log('translated to ', translations[0])
+      await textToSpeech(translations[0], 'ru')
+
       ws.send(JSON.stringify(data));
     });
 
